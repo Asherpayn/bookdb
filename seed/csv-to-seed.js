@@ -8,9 +8,11 @@
 //
 // Requires a "title" column; "isbn" and "author" are used if present.
 // This also accepts OpenReads' CSV export format as-is (see
-// https://github.com/mateusz-bak/openreads/blob/main/doc/csv.md) — its
-// extra columns (subtitle, status, rating, etc.) are simply ignored, and
-// rows with deleted=true are skipped.
+// https://github.com/mateusz-bak/openreads/blob/main/doc/csv.md). The
+// schema has no separate subtitle column, so a "subtitle" cell is folded
+// into title as "Title: Subtitle" rather than dropped. Its other extra
+// columns (status, rating, etc.) are ignored, and rows with deleted=true
+// are skipped.
 //
 // "owner" is optional. If present, it should be a name matching a row in
 // the `people` table (this script looks up the live list from the
@@ -97,6 +99,7 @@ async function main() {
   const col = (name) => header.indexOf(name);
   const isbnCol = col("isbn");
   const titleCol = col("title");
+  const subtitleCol = col("subtitle"); // present in OpenReads exports; the schema has no separate column, so this gets folded into title
   const authorCol = col("author");
   const ownerCol = col("owner");
   const deletedCol = col("deleted"); // present in OpenReads exports
@@ -138,7 +141,9 @@ async function main() {
     }
 
     const isbn = isbnCol !== -1 ? cells[isbnCol]?.trim() : "";
-    const title = cells[titleCol]?.trim() ?? "";
+    const rawTitle = cells[titleCol]?.trim() ?? "";
+    const subtitle = subtitleCol !== -1 ? cells[subtitleCol]?.trim() : "";
+    const title = subtitle ? `${rawTitle}: ${subtitle}` : rawTitle;
     const author = authorCol !== -1 ? cells[authorCol]?.trim() : "";
 
     const dedupeCondition =
