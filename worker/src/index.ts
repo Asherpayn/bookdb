@@ -40,17 +40,19 @@ async function handleGetBooks(request: Request, env: Env, url: URL): Promise<Res
   const { success } = await env.READ_LIMITER.limit({ key: ip });
   if (!success) return json(env, { error: "rate limited, try again shortly" }, 429);
 
+  // With an isbn, this is the scan/lookup path (ownership check for one
+  // book). Without one, it's a plain "list everything" browse/catalogue
+  // view — the frontend never omits isbn, so this doesn't change the
+  // existing lookup behavior.
   const isbn = url.searchParams.get("isbn");
-  if (!isbn) return json(env, { error: "isbn query param is required" }, 400);
-
-  const { results } = await env.DB.prepare(
-    `SELECT books.id, books.isbn, books.title, books.author, books.owner_id,
+  const baseQuery = `SELECT books.id, books.isbn, books.title, books.author, books.owner_id,
             people.name AS owner_name, books.cover_url, books.created_at
-     FROM books LEFT JOIN people ON people.id = books.owner_id
-     WHERE books.isbn = ?`,
-  )
-    .bind(isbn)
-    .all<BookRow>();
+     FROM books LEFT JOIN people ON people.id = books.owner_id`;
+
+  const { results } = await (isbn
+    ? env.DB.prepare(`${baseQuery} WHERE books.isbn = ? ORDER BY books.title`).bind(isbn)
+    : env.DB.prepare(`${baseQuery} ORDER BY books.title`)
+  ).all<BookRow>();
 
   return json(env, { results });
 }
