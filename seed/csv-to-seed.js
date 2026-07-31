@@ -6,11 +6,18 @@
 // Usage:
 //   node csv-to-seed.js books.csv > seed.sql
 //
-// Expected CSV columns (header row required): isbn,title,author,owner
-// `owner` should be a name matching a row already in the `people` table
-// (apply and edit worker/migrations/0002_seed_people.sql first) — this
-// script looks up the live people list from the deployed Worker's
-// `GET /people` so you write names, not ids, in the spreadsheet.
+// Requires a "title" column; "isbn" and "author" are used if present.
+// This also accepts OpenReads' CSV export format as-is (see
+// https://github.com/mateusz-bak/openreads/blob/main/doc/csv.md) — its
+// extra columns (subtitle, status, rating, etc.) are simply ignored, and
+// rows with deleted=true are skipped.
+//
+// "owner" is optional. If present, it should be a name matching a row in
+// the `people` table (this script looks up the live list from the
+// deployed Worker's `GET /people`, so you write names, not ids). Rows
+// with no owner column, or a blank cell, default to the "N/A" person —
+// OpenReads has no concept of book ownership, so a bulk import from it
+// will default everything to N/A for you to assign later.
 
 import { readFileSync } from "node:fs";
 
@@ -76,9 +83,10 @@ async function main() {
   const titleCol = col("title");
   const authorCol = col("author");
   const ownerCol = col("owner");
+  const deletedCol = col("deleted"); // present in OpenReads exports
 
-  if (titleCol === -1 || ownerCol === -1) {
-    console.error(`CSV must have "title" and "owner" columns. Found: ${header.join(", ")}`);
+  if (titleCol === -1) {
+    console.error(`CSV must have a "title" column. Found: ${header.join(", ")}`);
     process.exit(1);
   }
 
@@ -89,18 +97,28 @@ async function main() {
   }
   const { results: people } = await peopleRes.json();
   const nameToId = new Map(people.map((p) => [p.name.toLowerCase(), p.id]));
+  const naId = nameToId.get("n/a");
+  if (naId === undefined) {
+    console.error(`No "N/A" row in the people table — apply worker/migrations/0004_add_na_person.sql first.`);
+    process.exit(1);
+  }
 
   const statements = [];
   const unknownOwners = new Set();
 
   for (const cells of dataRows) {
     if (cells.every((c) => c === "")) continue; // skip blank lines
+    if (deletedCol !== -1 && (cells[deletedCol]?.trim().toLowerCase() ?? "") === "true") continue;
 
-    const ownerName = cells[ownerCol]?.trim() ?? "";
-    const ownerId = nameToId.get(ownerName.toLowerCase());
-    if (ownerName && ownerId === undefined) {
-      unknownOwners.add(ownerName);
-      continue;
+    const ownerName = ownerCol !== -1 ? (cells[ownerCol]?.trim() ?? "") : "";
+    let ownerId = naId;
+    if (ownerName) {
+      const matchedId = nameToId.get(ownerName.toLowerCase());
+      if (matchedId === undefined) {
+        unknownOwners.add(ownerName);
+        continue;
+      }
+      ownerId = matchedId;
     }
 
     const isbn = isbnCol !== -1 ? cells[isbnCol]?.trim() : "";
@@ -108,13 +126,13 @@ async function main() {
     const author = authorCol !== -1 ? cells[authorCol]?.trim() : "";
 
     statements.push(
-      `INSERT INTO books (isbn, title, author, owner_id) VALUES (${sqlString(isbn)}, ${sqlString(title)}, ${sqlString(author)}, ${ownerId ?? "NULL"});`,
+      `INSERT INTO books (isbn, title, author, owner_id) VALUES (${sqlString(isbn)}, ${sqlString(title)}, ${sqlString(author)}, ${ownerId});`,
     );
   }
 
   if (unknownOwners.size > 0) {
     console.error(`Skipped rows with owner names not found in the people table: ${[...unknownOwners].join(", ")}`);
-    console.error(`Add them to worker/migrations/0002_seed_people.sql (or a new migration) and re-run migrations first.`);
+    console.error(`Add them to a new migration and re-run migrations first.`);
   }
 
   console.log(statements.join("\n"));
