@@ -18,6 +18,13 @@
 // with no owner column, or a blank cell, default to the "N/A" person —
 // OpenReads has no concept of book ownership, so a bulk import from it
 // will default everything to N/A for you to assign later.
+//
+// Generated INSERTs are conditioned on (isbn, owner_id) not already
+// existing, so it's safe to import in overlapping chunks — e.g.
+// re-exporting your whole growing OpenReads library each time rather
+// than only the newly-scanned books — without creating duplicate rows.
+// This dedup key doesn't cover books with no ISBN at all, since there's
+// nothing else to key on; those could still double up across chunks.
 
 import { readFileSync } from "node:fs";
 
@@ -126,7 +133,9 @@ async function main() {
     const author = authorCol !== -1 ? cells[authorCol]?.trim() : "";
 
     statements.push(
-      `INSERT INTO books (isbn, title, author, owner_id) VALUES (${sqlString(isbn)}, ${sqlString(title)}, ${sqlString(author)}, ${ownerId});`,
+      `INSERT INTO books (isbn, title, author, owner_id)\n` +
+        `SELECT ${sqlString(isbn)}, ${sqlString(title)}, ${sqlString(author)}, ${ownerId}\n` +
+        `WHERE NOT EXISTS (SELECT 1 FROM books WHERE isbn = ${sqlString(isbn)} AND owner_id = ${ownerId});`,
     );
   }
 
