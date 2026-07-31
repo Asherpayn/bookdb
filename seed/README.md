@@ -1,60 +1,38 @@
-# Seeding your existing books
+# Bulk import tooling
 
-## Option A: scan with OpenReads, then import its export
+`csv-to-seed.js` converts a CSV of books into SQL `INSERT` statements,
+which get loaded into D1 with a direct `wrangler d1 execute` call — a
+plain CLI operation, not an HTTP request, so it bypasses the Worker and
+Turnstile entirely. That's the intended route for a big one-off import of
+an existing collection, rather than adding hundreds of books one at a
+time through the Turnstile-gated form.
 
-Since OpenReads' own barcode scanning is fast and reliable (unlike this
-site's browser-based scanner — see the project history for why), the
-easiest way to catalogue a big physical shelf is to scan everything into
-OpenReads, then import its export here:
+It's designed to accept two shapes of input:
 
-1. In OpenReads, scan your whole collection into one library.
-2. Export it as CSV (OpenReads' own format — [documented
-   here](https://github.com/mateusz-bak/openreads/blob/main/doc/csv.md)).
-3. Run it straight through the converter, no editing needed:
+- **[OpenReads](https://github.com/mateusz-bak/openreads)'s own CSV
+  export format**
+  ([documented here](https://github.com/mateusz-bak/openreads/blob/main/doc/csv.md)),
+  used as-is with no editing — since OpenReads' scanner is far more
+  reliable than this site's browser-based one, scanning a whole shelf
+  there and importing the export is the practical way to catalogue a
+  large physical collection. OpenReads has no concept of book ownership
+  (it's a single-user reading tracker), so every row it produces gets
+  `owner_id` set to the `N/A` person, to be reassigned per-book later.
+  Rows OpenReads marks `deleted=true` are skipped.
+- **A plain spreadsheet export**, with a header row of `title` plus
+  optionally `isbn`, `author`, and `owner`. `owner` is matched
+  case-insensitively against the live `people` table (fetched from
+  `GET /people`, so names are looked up as ids automatically); an
+  unrecognised name is skipped and reported rather than silently
+  discarded, and a missing or blank `owner` cell also defaults to `N/A`.
 
-   ```sh
-   node seed/csv-to-seed.js seed/books.csv > seed/seed.sql
-   ```
+Rather than a one-off dump, this is meant to support importing in
+chunks — the generated `INSERT`s are conditioned on `(isbn, owner_id)` not
+already existing, so re-running against overlapping data (e.g.
+re-exporting the whole, growing OpenReads library each time rather than
+isolating just the newly-scanned books) doesn't create duplicate rows.
+That dedup key doesn't help for books with no ISBN at all, since there's
+nothing else to key on — those could still double up across chunks.
 
-   OpenReads has no concept of "who owns this" (it's a single-user reading
-   tracker), so every imported book gets `owner_id` set to the `N/A`
-   person — same default the add-book form uses. Edit ownership later,
-   either directly in D1 or by re-running with an `owner` column added
-   (see Option B). Rows marked `deleted=true` in OpenReads are skipped
-   automatically.
-
-## Option B: your own spreadsheet, with owners
-
-If you'd rather assign owners upfront, export/build a CSV with a header
-row containing at least `title`, plus optionally `isbn`, `author`, and
-`owner`:
-
-```csv
-isbn,title,author,owner
-9780547928227,The Hobbit,J.R.R. Tolkien,Shared
-```
-
-`owner` must match a name in the `people` table (case-insensitive) —
-rows with an unrecognised name are skipped and listed on stderr so you
-can fix the spreadsheet or add the missing person via a new migration.
-Rows with no `owner` column, or a blank cell, default to `N/A`.
-
-## Either way
-
-Make sure the `people` table is already seeded on the **remote** D1
-database and the Worker is deployed, so `https://books.asherpayn.uk/people`
-returns your real list — `csv-to-seed.js` reads it live to turn owner
-names into ids.
-
-Generate the SQL, then load it directly into the remote database — this
-is a plain `wrangler` CLI call, so it bypasses the Worker and Turnstile
-entirely:
-
-```sh
-node seed/csv-to-seed.js seed/books.csv > seed/seed.sql
-cd worker
-npx wrangler d1 execute bookdb-db --remote --file=../seed/seed.sql
-```
-
-`seed/*.csv` and `seed/seed.sql` are gitignored since they contain your
-personal book list.
+`seed/*.csv` and `seed/seed.sql` are gitignored, since they'd contain a
+full personal book list.
