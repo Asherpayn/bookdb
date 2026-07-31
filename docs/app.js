@@ -356,6 +356,11 @@ async function populateOwnerOptions() {
       option.textContent = person.name;
       select.appendChild(option);
     }
+    // People are listed alphabetically, so "N/A" won't naturally land
+    // first — select it explicitly as the default rather than whatever
+    // the browser would otherwise default to.
+    const defaultPerson = results.find((person) => person.name === "N/A");
+    if (defaultPerson) select.value = String(defaultPerson.id);
   } catch {
     $("add-status").textContent = "Could not load owner list — check your connection.";
   }
