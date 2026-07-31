@@ -31,13 +31,22 @@ function setScanStatus(text) {
 // Two implementations, in preference order:
 //
 // 1. The browser's native `BarcodeDetector` API — hardware-accelerated
-//    (backed by the OS's own barcode detection, e.g. Android's ML Kit /
-//    Apple's Vision framework), which is why apps like OpenReads feel
-//    instant. Supported in Chrome/Android and Safari/iOS 17.4+.
-// 2. `html5-qrcode`, a pure-JS decoder, as a fallback for browsers without
-//    native support (e.g. desktop Firefox). It's noticeably slower because
-//    it's decoding frames in JS at a fixed 10fps rather than using
-//    hardware acceleration.
+//    (backed by the OS's own barcode detection, e.g. Android's ML Kit),
+//    which is why apps like OpenReads feel instant. Reliably supported on
+//    Chromium browsers (Chrome/Edge/Samsung Internet on Android). Safari
+//    is NOT a real target here even though `window.BarcodeDetector` may
+//    exist there: it's an opt-in experimental flag on iOS 17
+//    (Settings > Safari > Advanced > Feature Flags > Shape Detection API)
+//    and WebKit has an open bug that it doesn't actually detect anything
+//    even when enabled (https://bugs.webkit.org/show_bug.cgi?id=281848) —
+//    so feature-detecting its mere *presence* is misleading. The timeout
+//    fallback below is what actually protects Safari users, not the
+//    feature check.
+// 2. `html5-qrcode`, a pure-JS decoder, used whenever native detection
+//    isn't available *or* doesn't produce a result quickly — this is the
+//    only thing that reliably works on iPhone Safari today.
+
+const NATIVE_SCAN_TIMEOUT_MS = 4000; // how long to trust native detection before assuming it's non-functional
 
 async function nativeBarcodeDetectionSupported() {
   if (!("BarcodeDetector" in window)) return false;
@@ -89,17 +98,37 @@ async function startNativeScan() {
 
   const detector = new BarcodeDetector({ formats: ["ean_13"] });
   let running = true;
-  activeStopFn = () => {
+  const stopStream = () => {
     running = false;
     stream.getTracks().forEach((track) => track.stop());
+  };
+  activeStopFn = () => {
+    stopStream();
     container.innerHTML = "";
   };
 
   $("stop-scan-btn").hidden = false;
   setScanStatus("Point the camera at the barcode.");
 
+  const startedAt = performance.now();
+
   const scanFrame = async () => {
     if (!running) return;
+
+    if (performance.now() - startedAt > NATIVE_SCAN_TIMEOUT_MS) {
+      // Native detection exists but hasn't found anything in a while —
+      // on a real barcode this normally takes well under a second, so
+      // this almost certainly means the platform's implementation isn't
+      // actually functional (e.g. Safari, see note above). Hand off to
+      // the JS decoder instead of leaving the user stuck on a scanner
+      // that will never detect anything.
+      stopStream();
+      container.innerHTML = ""; // remove our leftover <video> before html5-qrcode sets up its own
+      setScanStatus("Switching to compatibility mode...");
+      await startHtml5Scan();
+      return;
+    }
+
     try {
       const codes = await detector.detect(video);
       if (codes.length > 0) {
@@ -110,7 +139,7 @@ async function startNativeScan() {
       }
     } catch {
       // Transient per-frame errors are expected (e.g. mid-focus-hunt) —
-      // just keep trying on the next frame.
+      // just keep trying until the timeout above gives up.
     }
     if (running) requestAnimationFrame(scanFrame);
   };
