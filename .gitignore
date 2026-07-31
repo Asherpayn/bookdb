@@ -6,3 +6,5 @@ worker/.turnstile-widget-response.json
 worker/worker-configuration.d.ts
 seed/*.csv
 seed/seed.sql
+.DS_Store
+worker/.DS_Store
