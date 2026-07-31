@@ -12,9 +12,9 @@ const scanView = $("scan-view");
 const resultView = $("result-view");
 const addView = $("add-view");
 
-let html5QrCode = null;
 let turnstileWidgetId = null;
 let currentLookup = null; // { isbn, title, author, coverUrl }
+let activeStopFn = null; // stops whichever scan method is currently running
 
 function showView(view) {
   for (const el of [scanView, resultView, addView]) {
@@ -26,10 +26,99 @@ function setScanStatus(text) {
   $("scan-status").textContent = text;
 }
 
-// --- Barcode scanning (html5-qrcode) ---------------------------------
+// --- Barcode scanning ---------------------------------------------------
+//
+// Two implementations, in preference order:
+//
+// 1. The browser's native `BarcodeDetector` API — hardware-accelerated
+//    (backed by the OS's own barcode detection, e.g. Android's ML Kit /
+//    Apple's Vision framework), which is why apps like OpenReads feel
+//    instant. Supported in Chrome/Android and Safari/iOS 17.4+.
+// 2. `html5-qrcode`, a pure-JS decoder, as a fallback for browsers without
+//    native support (e.g. desktop Firefox). It's noticeably slower because
+//    it's decoding frames in JS at a fixed 10fps rather than using
+//    hardware acceleration.
 
-function startScan() {
-  html5QrCode = new Html5Qrcode("qr-reader");
+async function nativeBarcodeDetectionSupported() {
+  if (!("BarcodeDetector" in window)) return false;
+  try {
+    const formats = await BarcodeDetector.getSupportedFormats();
+    return formats.includes("ean_13");
+  } catch {
+    return false;
+  }
+}
+
+async function startScan() {
+  $("start-scan-btn").hidden = true;
+  setScanStatus("Starting camera...");
+
+  if (await nativeBarcodeDetectionSupported()) {
+    await startNativeScan();
+  } else {
+    await startHtml5Scan();
+  }
+}
+
+function stopScan() {
+  activeStopFn?.();
+  activeStopFn = null;
+  $("start-scan-btn").hidden = false;
+  $("stop-scan-btn").hidden = true;
+  setScanStatus("");
+}
+
+async function startNativeScan() {
+  const container = $("qr-reader");
+  container.innerHTML = "";
+  const video = document.createElement("video");
+  video.setAttribute("playsinline", ""); // required for inline (non-fullscreen) playback on iOS
+  video.muted = true;
+  container.appendChild(video);
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  } catch (err) {
+    setScanStatus(`Camera unavailable (${err}). Use manual entry below.`);
+    $("start-scan-btn").hidden = false;
+    return;
+  }
+  video.srcObject = stream;
+  await video.play();
+
+  const detector = new BarcodeDetector({ formats: ["ean_13"] });
+  let running = true;
+  activeStopFn = () => {
+    running = false;
+    stream.getTracks().forEach((track) => track.stop());
+    container.innerHTML = "";
+  };
+
+  $("stop-scan-btn").hidden = false;
+  setScanStatus("Point the camera at the barcode.");
+
+  const scanFrame = async () => {
+    if (!running) return;
+    try {
+      const codes = await detector.detect(video);
+      if (codes.length > 0) {
+        const isbn = codes[0].rawValue;
+        stopScan();
+        handleIsbn(isbn);
+        return;
+      }
+    } catch {
+      // Transient per-frame errors are expected (e.g. mid-focus-hunt) —
+      // just keep trying on the next frame.
+    }
+    if (running) requestAnimationFrame(scanFrame);
+  };
+  requestAnimationFrame(scanFrame);
+}
+
+async function startHtml5Scan() {
+  const html5QrCode = new Html5Qrcode("qr-reader");
   const config = {
     fps: 10,
     qrbox: { width: 250, height: 150 },
@@ -38,35 +127,23 @@ function startScan() {
     formatsToSupport: [Html5QrcodeSupportedFormats.EAN_13],
   };
 
-  html5QrCode
-    .start({ facingMode: "environment" }, config, onScanSuccess, () => {
+  activeStopFn = () => {
+    html5QrCode.stop().catch(() => {});
+  };
+
+  try {
+    await html5QrCode.start({ facingMode: "environment" }, config, (decodedText) => {
+      stopScan();
+      handleIsbn(decodedText);
+    }, () => {
       // Called continuously while no barcode is found — nothing to do.
-    })
-    .then(() => {
-      $("start-scan-btn").hidden = true;
-      $("stop-scan-btn").hidden = false;
-      setScanStatus("Point the camera at the barcode.");
-    })
-    .catch((err) => {
-      setScanStatus(`Camera unavailable (${err}). Use manual entry below.`);
     });
-}
-
-function stopScan() {
-  if (!html5QrCode) return;
-  html5QrCode
-    .stop()
-    .catch(() => {})
-    .finally(() => {
-      $("start-scan-btn").hidden = false;
-      $("stop-scan-btn").hidden = true;
-      setScanStatus("");
-    });
-}
-
-function onScanSuccess(decodedText) {
-  stopScan();
-  handleIsbn(decodedText);
+    $("stop-scan-btn").hidden = false;
+    setScanStatus("Point the camera at the barcode.");
+  } catch (err) {
+    setScanStatus(`Camera unavailable (${err}). Use manual entry below.`);
+    $("start-scan-btn").hidden = false;
+  }
 }
 
 $("start-scan-btn").addEventListener("click", startScan);
