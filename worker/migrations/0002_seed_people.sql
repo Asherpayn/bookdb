@@ -1,0 +1,18 @@
+INSERT INTO people (name) VALUES
+  ('Mum'),
+  ('Dad'),
+  ('Me'),
+  ('Sister'),
+  ('Brother'),
+  ('Son'),
+  ('Daughter'),
+  ('Granny'),
+  ('Grandad'),
+  ('Grandma'),
+  ('Grandpa'),
+  ('Aunt'),
+  ('Uncle'),
+  ('Niece'),
+  ('Nephew'),
+  ('Cousin'),
+  ('Shared');

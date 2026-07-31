@@ -1,0 +1,52 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "bookdb-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-31",
+
+  // Custom domain for the API. Since asherpayn.uk is already on this
+  // Cloudflare account, `custom_domain: true` makes `wrangler deploy`
+  // create the DNS record + certificate itself — no dashboard step needed.
+  // This only adds a new subdomain record; it does not touch the apex
+  // domain or the existing GitHub Pages site.
+  "routes": [
+    { "pattern": "books.asherpayn.uk", "custom_domain": true }
+  ],
+
+  // Filled in after `wrangler d1 create bookdb-db` (see worker/README or
+  // top-level README for the full command). Replace <DATABASE_ID> below.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "bookdb-db",
+      "database_id": "7ded2494-41e6-4f04-a24a-bfe98e5ae00c",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Two separate bindings because a single rate-limit binding only
+  // supports one limit/period pair — reads (lookups while scanning)
+  // should stay frictionless, writes should be tightly capped.
+  "ratelimits": [
+    {
+      "name": "READ_LIMITER",
+      "namespace_id": "1001",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "WRITE_LIMITER",
+      "namespace_id": "1002",
+      "simple": { "limit": 5, "period": 60 }
+    }
+  ],
+
+  // Plain (non-secret) config. TURNSTILE_SECRET_KEY is set separately via
+  // `wrangler secret put TURNSTILE_SECRET_KEY` so it's never committed here.
+  "vars": {
+    "ALLOWED_ORIGIN": "https://shelf.asherpayn.uk"
+  },
+
+  "observability": {
+    "enabled": true
+  }
+}

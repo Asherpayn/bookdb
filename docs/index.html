@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>Family Book Index</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+</head>
+<body>
+  <header>
+    <h1>Family Book Index</h1>
+  </header>
+
+  <main>
+    <!-- Scan / manual ISBN entry -->
+    <section id="scan-view">
+      <div id="qr-reader"></div>
+      <button id="start-scan-btn" type="button">Start camera scan</button>
+      <button id="stop-scan-btn" type="button" hidden>Stop scanning</button>
+
+      <p class="or-divider">or enter an ISBN manually</p>
+      <form id="manual-isbn-form">
+        <input id="manual-isbn-input" type="text" inputmode="numeric" placeholder="978..." required />
+        <button type="submit">Look up</button>
+      </form>
+
+      <p id="scan-status" role="status"></p>
+    </section>
+
+    <!-- Lookup result -->
+    <section id="result-view" hidden>
+      <div id="book-summary"></div>
+      <div id="owned-result"></div>
+      <button id="add-book-btn" type="button" hidden>Add this book</button>
+      <button id="back-to-scan-btn" type="button">Scan another</button>
+    </section>
+
+    <!-- Add book form -->
+    <section id="add-view" hidden>
+      <h2>Add book</h2>
+      <form id="add-book-form">
+        <label>
+          Title
+          <input id="add-title" name="title" type="text" required />
+        </label>
+        <label>
+          Author
+          <input id="add-author" name="author" type="text" />
+        </label>
+        <label>
+          ISBN
+          <input id="add-isbn" name="isbn" type="text" />
+        </label>
+        <label>
+          Owner
+          <select id="add-owner" name="owner_id" required></select>
+        </label>
+
+        <label>
+          Cover photo
+          <img id="add-cover-preview" alt="" hidden />
+          <input id="add-cover-input" type="file" accept="image/*" capture="environment" />
+        </label>
+
+        <div id="turnstile-container"></div>
+
+        <button type="submit">Save</button>
+        <button id="cancel-add-btn" type="button">Cancel</button>
+      </form>
+      <p id="add-status" role="status"></p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
